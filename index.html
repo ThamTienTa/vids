@@ -152,191 +152,117 @@ main{padding:40px}
 </div>
 
 <script>
-let SUPABASE_URL = 'https://ibsjnaqjikxpiteavzca.supabase.co';
-let SUPABASE_KEY = '';
-let SUPABASE_SERVICE_KEY = '';
-let BUCKET = 'videos';
+const SUPABASE_URL = "https://ibsjnaqjikxpiteavzca.supabase.co";
+const SUPABASE_KEY = "YOUR_ANON_KEY"; // IMPORTANT
+const BUCKET = "videos";
 
 let selectedFile = null;
 
-async function loadEnv() {
-  try {
-    const res = await fetch('./.env');
-    if (!res.ok) return;
-    const text = await res.text();
-    text.split(/\r?\n/).forEach(line => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) return;
-      const [key, ...rest] = trimmed.split('=');
-      if (!key || rest.length === 0) return;
-      let value = rest.join('=').trim();
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-      switch (key.trim()) {
-        case 'SUPABASE_URL': SUPABASE_URL = value; break;
-        case 'SUPABASE_KEY': SUPABASE_KEY = value; break;
-        case 'SUPABASE_SERVICE_KEY': SUPABASE_SERVICE_KEY = value; break;
-        case 'BUCKET': BUCKET = value; break;
-      }
-    });
-  } catch (err) {
-    console.warn('Could not load .env file:', err);
-  }
-}
-
+// ── INIT ─────────────────────────────
 async function init() {
-  await loadEnv();
   loadVideos();
 }
 
-// ── FETCH VIDEOS ─────────────────────────────────────────
+// ── LOAD VIDEOS ───────────────────────
 async function loadVideos() {
   try {
-    const res = await fetch(SUPABASE_URL + '/storage/v1/object/list/' + BUCKET + '?limit=100&offset=0&sortBy=created_at:desc', {
-      headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY }
-    });
+    const res = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/list/${BUCKET}?limit=100`,
+      {
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: "Bearer " + SUPABASE_KEY,
+        },
+      }
+    );
+
     const files = await res.json();
-    if (!Array.isArray(files)) throw new Error('bad response');
     renderGrid(files);
-  } catch(e) {
-    document.getElementById('gridContainer').innerHTML = '<div class="empty"><div class="empty-big">ERR</div><p>could not load videos — check bucket name & permissions</p></div>';
+  } catch (err) {
+    console.log(err);
+    document.getElementById("gridContainer").innerHTML =
+      "<div class='empty'>FAILED TO LOAD</div>";
   }
 }
 
-function getPublicUrl(name) {
-  return SUPABASE_URL + '/storage/v1/object/public/' + BUCKET + '/' + encodeURIComponent(name);
+// ── RENDER ───────────────────────────
+function getUrl(name) {
+  return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${name}`;
 }
 
 function renderGrid(files) {
-  const vids = files.filter(f => f.name && /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(f.name));
-  document.getElementById('countBadge').textContent = vids.length + ' video' + (vids.length !== 1 ? 's' : '');
+  const vids = files.filter(f => f.name);
+
+  document.getElementById("countBadge").textContent =
+    vids.length + " videos";
 
   if (!vids.length) {
-    document.getElementById('gridContainer').innerHTML = '<div class="empty"><div class="empty-big">EMPTY</div><p>no videos yet — upload the first one</p></div>';
+    document.getElementById("gridContainer").innerHTML =
+      "<div class='empty'>NO VIDEOS</div>";
     return;
   }
 
-  const html = vids.map(f => {
-    const url = getPublicUrl(f.name);
-    const title = f.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-    const date = f.updated_at ? new Date(f.updated_at).toLocaleDateString('en',{month:'short',day:'numeric',year:'numeric'}) : '';
-    const size = f.metadata && f.metadata.size ? (f.metadata.size / 1024 / 1024).toFixed(1) + ' MB' : '';
-    return `<div class="vid-card" onclick="openLightbox('${url}','${esc(title)}')">
-      <video src="${url}" muted preload="metadata"></video>
-      <div class="vid-overlay"></div>
-      <div class="vid-info">
-        <div class="vid-title">${esc(title)}</div>
-        <div class="vid-meta">${date}${size?' · '+size:''}</div>
-      </div>
-      <div class="play-icon"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+  document.getElementById("gridContainer").innerHTML =
+    `<div class="grid">
+      ${vids.map(v => `
+        <div class="vid-card" onclick="openLightbox('${getUrl(v.name)}','${v.name}')">
+          <video src="${getUrl(v.name)}" muted></video>
+        </div>
+      `).join("")}
     </div>`;
-  }).join('');
-
-  document.getElementById('gridContainer').innerHTML = '<div class="grid">' + html + '</div>';
 }
 
-// ── UPLOAD ───────────────────────────────────────────────
+// ── UPLOAD ───────────────────────────
 function handleFile(e) {
-  const f = e.target.files[0];
-  if (!f) return;
-  selectedFile = f;
-  document.getElementById('fileHint').textContent = f.name + ' — ' + (f.size/1024/1024).toFixed(1) + ' MB';
-  document.getElementById('dropZone').style.borderColor = 'var(--accent)';
-  document.getElementById('submitBtn').disabled = false;
+  selectedFile = e.target.files[0];
+  document.getElementById("submitBtn").disabled = false;
 }
 
 async function uploadVideo() {
   if (!selectedFile) return;
-  const title = document.getElementById('titleInput').value.trim();
-  const ext = selectedFile.name.split('.').pop();
-  const safeName = (title || selectedFile.name.replace(/\.[^.]+$/,'')).replace(/[^a-zA-Z0-9\u00C0-\u024F\s._-]/g,'').replace(/\s+/g,'-');
-  const filename = safeName + '-' + Date.now() + '.' + ext;
 
-  document.getElementById('submitBtn').disabled = true;
-  document.getElementById('progressWrap').style.display = 'block';
-  document.getElementById('uploadError').style.display = 'none';
+  const fileName = Date.now() + "-" + selectedFile.name;
 
-  try {
-    // use XHR for progress tracking
-    await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      const authKey = SUPABASE_SERVICE_KEY || SUPABASE_KEY;
-      xhr.open('PUT', SUPABASE_URL + '/storage/v1/object/' + BUCKET + '/' + encodeURIComponent(filename));
-      xhr.setRequestHeader('Authorization', 'Bearer ' + authKey);
-      xhr.setRequestHeader('apikey', authKey);
-      xhr.setRequestHeader('Content-Type', selectedFile.type || 'video/mp4');
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round(e.loaded / e.total * 100);
-          document.getElementById('progressFill').style.width = pct + '%';
-          document.getElementById('progressLabel').textContent = 'uploading... ' + pct + '%';
-        }
-      };
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve();
-        else reject(new Error('Upload failed: ' + xhr.status + ' ' + xhr.responseText));
-      };
-      xhr.onerror = () => reject(new Error('Network error'));
-      xhr.send(selectedFile);
-    });
-
-    document.getElementById('progressLabel').textContent = 'done ✓';
-    setTimeout(() => { closeModal(); loadVideos(); }, 800);
-  } catch(e) {
-    let hint = '';
-    try {
-      const body = JSON.parse(e.message.replace(/^Upload failed: \d+ /, ''));
-      if (body?.statusCode === 403 && body?.error === 'Unauthorized') {
-        hint = ' Browser upload blocked by Supabase row-level security. You need an authenticated user/session or a service role/signed URL from a server-side backend.';
-      }
-    } catch (err) {
-      // ignore parse errors
+  const res = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${fileName}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: "Bearer " + SUPABASE_KEY,
+        "Content-Type": selectedFile.type || "video/mp4",
+      },
+      body: selectedFile,
     }
-    document.getElementById('uploadError').textContent = e.message + hint;
-    document.getElementById('uploadError').style.display = 'block';
-    document.getElementById('submitBtn').disabled = false;
-    document.getElementById('progressLabel').textContent = 'failed';
+  );
+
+  if (!res.ok) {
+    alert("Upload failed");
+    return;
   }
+
+  closeModal();
+  loadVideos();
 }
 
-// ── MODAL ────────────────────────────────────────────────
-function openModal() { document.getElementById('modalOverlay').classList.add('open'); }
+// ── MODAL ────────────────────────────
+function openModal() {
+  document.getElementById("modalOverlay").classList.add("open");
+}
+
 function closeModal() {
-  document.getElementById('modalOverlay').classList.remove('open');
-  selectedFile = null;
-  document.getElementById('fileInput').value = '';
-  document.getElementById('fileHint').textContent = 'mp4, mov, webm — any size';
-  document.getElementById('dropZone').style.borderColor = '';
-  document.getElementById('titleInput').value = '';
-  document.getElementById('progressWrap').style.display = 'none';
-  document.getElementById('progressFill').style.width = '0%';
-  document.getElementById('uploadError').style.display = 'none';
-  document.getElementById('submitBtn').disabled = true;
+  document.getElementById("modalOverlay").classList.remove("open");
 }
-function closeModalOutside(e) { if (e.target === document.getElementById('modalOverlay')) closeModal(); }
 
-// drag & drop
-const dz = document.getElementById('dropZone');
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
-dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag'); const f = e.dataTransfer.files[0]; if (f) { selectedFile=f; document.getElementById('fileHint').textContent=f.name+' — '+(f.size/1024/1024).toFixed(1)+' MB'; dz.style.borderColor='var(--accent)'; document.getElementById('submitBtn').disabled=false; } });
-
-// ── LIGHTBOX ─────────────────────────────────────────────
+// ── LIGHTBOX ─────────────────────────
 function openLightbox(url, title) {
-  document.getElementById('lightboxVideo').src = url;
-  document.getElementById('lightboxTitle').textContent = title;
-  document.getElementById('lightbox').classList.add('open');
-  document.getElementById('lightboxVideo').play();
+  document.getElementById("lightboxVideo").src = url;
+  document.getElementById("lightbox").classList.add("open");
 }
-function closeLightbox() {
-  document.getElementById('lightbox').classList.remove('open');
-  document.getElementById('lightboxVideo').pause();
-  document.getElementById('lightboxVideo').src = '';
-}
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeLightbox(); closeModal(); } });
 
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function closeLightbox() {
+  document.getElementById("lightbox").classList.remove("open");
+}
 
 init();
 </script>
